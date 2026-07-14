@@ -7,7 +7,16 @@ from typing import Any
 
 from openai import OpenAI, OpenAIError
 
-from icoder.llm.base import ChatResponse, LlmClient, LlmError, Message, ToolCall, ToolDefinition
+from icoder.llm.base import (
+    NOOP_STREAM_LISTENER,
+    ChatResponse,
+    LlmClient,
+    LlmError,
+    Message,
+    StreamListener,
+    ToolCall,
+    ToolDefinition,
+)
 
 
 class OpenAICompatibleClient(LlmClient):
@@ -90,6 +99,105 @@ class OpenAICompatibleClient(LlmClient):
             content=content,
             tool_calls=tool_calls,
             reasoning_content=reasoning,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+        )
+
+    def chat_stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolDefinition] | None = None,
+        listener: StreamListener | None = None,
+    ) -> ChatResponse:
+        """Consume an OpenAI-compatible stream and normalize all deltas."""
+        if not messages:
+            raise ValueError("messages cannot be empty")
+        stream_listener = listener or NOOP_STREAM_LISTENER
+        request: dict[str, Any] = {
+            "model": self._model,
+            "messages": [dict(message) for message in messages],
+            "stream": True,
+        }
+        if tools:
+            request["tools"] = [dict(tool) for tool in tools]
+
+        try:
+            chunks = self._sdk_client.chat.completions.create(**request)
+            content_parts: list[str] = []
+            reasoning_parts: list[str] = []
+            tool_parts: dict[int, dict[str, str]] = {}
+            prompt_tokens = completion_tokens = total_tokens = 0
+
+            for chunk in chunks:
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    prompt_tokens = _usage_value(usage, "prompt_tokens") or prompt_tokens
+                    completion_tokens = _usage_value(usage, "completion_tokens") or completion_tokens
+                    total_tokens = _usage_value(usage, "total_tokens") or total_tokens
+
+                choices = getattr(chunk, "choices", None) or ()
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is None:
+                    continue
+
+                reasoning = _optional_text(
+                    getattr(delta, "reasoning_content", None)
+                    or getattr(delta, "reasoning", None)
+                )
+                if reasoning:
+                    reasoning_parts.append(reasoning)
+                    stream_listener.on_reasoning_delta(reasoning)
+
+                content = _optional_text(getattr(delta, "content", None))
+                if content:
+                    content_parts.append(content)
+                    stream_listener.on_content_delta(content)
+
+                for position, tool_delta in enumerate(getattr(delta, "tool_calls", None) or ()):
+                    index = getattr(tool_delta, "index", None)
+                    if not isinstance(index, int):
+                        index = position
+                    accumulator = tool_parts.setdefault(
+                        index, {"id": "", "name": "", "arguments": ""}
+                    )
+                    call_id = getattr(tool_delta, "id", None)
+                    if isinstance(call_id, str) and call_id:
+                        accumulator["id"] = call_id
+                    function = getattr(tool_delta, "function", None)
+                    if function is not None:
+                        name = getattr(function, "name", None)
+                        arguments = getattr(function, "arguments", None)
+                        if isinstance(name, str):
+                            accumulator["name"] += name
+                        if isinstance(arguments, str):
+                            accumulator["arguments"] += arguments
+        except OpenAIError as exc:
+            raise LlmError(f"{self._provider} API request failed: {exc}") from exc
+        except (OSError, TimeoutError) as exc:
+            raise LlmError(f"{self._provider} connection failed: {exc}") from exc
+
+        tool_calls = tuple(
+            ToolCall(
+                id=value["id"],
+                name=value["name"],
+                arguments=value["arguments"] or "{}",
+            )
+            for _, value in sorted(tool_parts.items())
+            if value["id"] and value["name"]
+        )
+        content_text = "".join(content_parts)
+        reasoning_text = "".join(reasoning_parts)
+        if not content_text and not reasoning_text and not tool_calls:
+            raise LlmError(f"{self._provider} returned an empty response")
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + completion_tokens
+        return ChatResponse(
+            content=content_text,
+            tool_calls=tool_calls,
+            reasoning_content=reasoning_text or None,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,

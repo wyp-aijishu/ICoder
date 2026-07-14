@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from icoder.llm.base import LlmError
+from icoder.llm.base import LlmError, StreamListener
 from icoder.llm.deepseek import DeepSeekClient
 
 
@@ -27,6 +27,18 @@ def sdk_with(completions: FakeCompletions):
 
 def completion(message, usage=None):
     return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
+
+
+class RecordingStreamListener(StreamListener):
+    def __init__(self) -> None:
+        self.reasoning: list[str] = []
+        self.content: list[str] = []
+
+    def on_reasoning_delta(self, delta: str) -> None:
+        self.reasoning.append(delta)
+
+    def on_content_delta(self, delta: str) -> None:
+        self.content.append(delta)
 
 
 def test_normalizes_text_response_and_omits_empty_tools() -> None:
@@ -101,3 +113,61 @@ def test_requires_non_empty_messages() -> None:
 
     with pytest.raises(ValueError, match="messages cannot be empty"):
         client.chat([])
+
+
+def test_streams_reasoning_content_and_accumulates_tool_call_fragments() -> None:
+    chunks = [
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(
+                reasoning_content="先分析",
+                content=None,
+                tool_calls=None,
+            ))],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(
+                reasoning_content=None,
+                content="准备读取",
+                tool_calls=[SimpleNamespace(
+                    index=0,
+                    id="call-1",
+                    function=SimpleNamespace(name="read_", arguments='{"path":"'),
+                )],
+            ))],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[SimpleNamespace(delta=SimpleNamespace(
+                reasoning_content=None,
+                content="文件",
+                tool_calls=[SimpleNamespace(
+                    index=0,
+                    id=None,
+                    function=SimpleNamespace(name="file", arguments='a.py"}'),
+                )],
+            ))],
+            usage=None,
+        ),
+        SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(prompt_tokens=8, completion_tokens=5, total_tokens=13),
+        ),
+    ]
+    completions = FakeCompletions(chunks)
+    client = DeepSeekClient("key", sdk_client=sdk_with(completions))
+    listener = RecordingStreamListener()
+
+    response = client.chat_stream(
+        [{"role": "user", "content": "inspect"}],
+        listener=listener,
+    )
+
+    assert listener.reasoning == ["先分析"]
+    assert listener.content == ["准备读取", "文件"]
+    assert response.reasoning_content == "先分析"
+    assert response.content == "准备读取文件"
+    assert response.tool_calls[0].name == "read_file"
+    assert response.tool_calls[0].arguments == '{"path":"a.py"}'
+    assert response.total_tokens == 13
+    assert completions.requests[0]["stream"] is True

@@ -11,6 +11,7 @@ from typing import Any, TextIO
 from icoder import __version__
 from icoder.agent import Agent, AgentError
 from icoder.cli.commands import CommandType, parse_command, parse_model_selection
+from icoder.cli.streaming import CliStreamRenderer
 from icoder.llm import LlmClientFactory, LlmConfigurationError, LlmError
 from icoder.tools import create_default_registry
 
@@ -90,11 +91,13 @@ def run_cli(
     try:
         llm_client = client_factory(args.provider, model=args.model)
         registry = registry_factory(workspace)
+        stream_renderer = CliStreamRenderer(output)
         agent = Agent(
             llm_client,
             registry,
             workspace=workspace,
             max_steps=args.max_steps,
+            stream_listener=stream_renderer,
         )
     except (LlmConfigurationError, ValueError, OSError) as exc:
         _print(output, f"❌ 启动失败: {exc}")
@@ -162,13 +165,17 @@ def run_cli(
             continue
 
         try:
+            stream_renderer.reset_turn()
             answer = agent.run(text)
         except KeyboardInterrupt:
             _print(output, "\n⏹️ 当前任务已中断。")
         except (LlmError, AgentError) as exc:
             _print(output, f"❌ 任务失败: {exc}")
         else:
-            _print(output, answer)
+            if not stream_renderer.streamed_content:
+                _print(output, answer)
+            else:
+                _print(output, "")
 
 
 def _prompt(agent: Agent) -> str:

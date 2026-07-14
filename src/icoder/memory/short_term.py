@@ -119,21 +119,21 @@ class ShortTermMemory:
         ]
         summary_tokens = response.completion_tokens or estimate_user_tokens(self._summary)
         self._used_tokens = summary_tokens + _estimate_retained_tokens(retained)
-        # --- 调试输出 ---
-        print("\n" + "=" * 60)
-        print("📋 压缩摘要:")
-        print("-" * 40)
-        print(self._summary)
-        print("-" * 40)
-        print("📨 压缩后的历史对话 (messages):")
-        for i, msg in enumerate(self._messages):
-            role = msg.get("role", "?")
-            content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > 200:
-                content = content[:200] + "..."
-            print(f"  [{i}] {role}: {content}")
-        print("=" * 60 + "\n")
-        # --- 调试输出结束 ---
+        # # --- 调试输出 ---
+        # print("\n" + "=" * 60)
+        # print("📋 压缩摘要:")
+        # print("-" * 40)
+        # print(self._summary)
+        # print("-" * 40)
+        # print("📨 压缩后的历史对话 (messages):")
+        # for i, msg in enumerate(self._messages):
+        #     role = msg.get("role", "?")
+        #     content = msg.get("content", "")
+        #     if isinstance(content, str) and len(content) > 200:
+        #         content = content[:200] + "..."
+        #     print(f"  [{i}] {role}: {content}")
+        # print("=" * 60 + "\n")
+        # # --- 调试输出结束 ---
         return True
 
     def _completed_turns(self) -> list[tuple[int, int]]:

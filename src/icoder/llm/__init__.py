@@ -5,6 +5,7 @@ from icoder.llm.base import (
 	LlmClient,
 	LlmConfigurationError,
 	LlmError,
+	StreamListener,
 	ToolCall,
 )
 from icoder.llm.deepseek import DeepSeekClient
@@ -19,5 +20,6 @@ __all__ = [
 	"LlmClientFactory",
 	"LlmConfigurationError",
 	"LlmError",
+	"StreamListener",
 	"ToolCall",
 ]

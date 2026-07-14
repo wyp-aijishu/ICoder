@@ -6,7 +6,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from icoder.llm.base import ChatResponse, LlmClient, ToolCall
+from icoder.llm.base import (
+    NOOP_STREAM_LISTENER,
+    ChatResponse,
+    LlmClient,
+    StreamListener,
+    ToolCall,
+)
 from icoder.memory import ShortTermMemory
 from icoder.tools.registry import ToolRegistry
 
@@ -34,6 +40,7 @@ class Agent:
         max_steps: int = DEFAULT_MAX_STEPS,
         max_repeated_tool_calls: int = DEFAULT_MAX_REPEATED_TOOL_CALLS,
         system_prompt: str | None = None,
+        stream_listener: StreamListener | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be greater than zero")
@@ -45,6 +52,7 @@ class Agent:
         self._max_repeated_tool_calls = max_repeated_tool_calls
         self._system_prompt = system_prompt or _build_system_prompt(workspace)
         self._memory = ShortTermMemory(self._system_prompt)
+        self._stream_listener = stream_listener or NOOP_STREAM_LISTENER
 
     @property
     def llm_client(self) -> LlmClient:
@@ -87,9 +95,11 @@ class Agent:
 
         for _step in range(1, self._max_steps + 1):
             self._memory.prepare_for_llm(self._llm_client, tool_definitions or None)
-            response = self._llm_client.chat(
+            self._stream_listener.on_llm_start()
+            response = self._llm_client.chat_stream(
                 self._memory.messages,
                 tool_definitions or None,
+                self._stream_listener,
             )
             self._memory.record_usage(response)
             if response.has_tool_calls:
@@ -134,8 +144,14 @@ class Agent:
 
     def _execute_tool_calls(self, calls: Sequence[ToolCall]) -> None:
         for call in calls:
+            self._stream_listener.on_tool_start(call)
             result = self._tool_registry.execute(call.name, call.arguments)
             content = f"ERROR: {result.content}" if result.is_error else result.content
+            self._stream_listener.on_tool_end(
+                call,
+                result.content,
+                is_error=result.is_error,
+            )
             self._memory.append(
                 {
                     "role": "tool",

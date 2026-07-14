@@ -5,7 +5,14 @@ from collections.abc import Sequence
 import pytest
 
 from icoder.agent.agent import Agent, AgentLoopError
-from icoder.llm.base import ChatResponse, LlmClient, Message, ToolCall, ToolDefinition
+from icoder.llm.base import (
+    ChatResponse,
+    LlmClient,
+    Message,
+    StreamListener,
+    ToolCall,
+    ToolDefinition,
+)
 from icoder.tools.base import Tool, object_schema
 from icoder.tools.registry import ToolRegistry
 
@@ -227,3 +234,42 @@ def test_history_property_is_a_defensive_copy() -> None:
     snapshot[-1]["content"] = "changed"
 
     assert agent.conversation_history[-1]["content"] == "answer"
+
+
+def test_stream_listener_receives_model_and_tool_events_in_order() -> None:
+    events: list[str] = []
+
+    class Listener(StreamListener):
+        def on_llm_start(self) -> None:
+            events.append("llm")
+
+        def on_reasoning_delta(self, delta: str) -> None:
+            events.append(f"reasoning:{delta}")
+
+        def on_content_delta(self, delta: str) -> None:
+            events.append(f"content:{delta}")
+
+        def on_tool_start(self, call: ToolCall) -> None:
+            events.append(f"tool-start:{call.name}")
+
+        def on_tool_end(self, call: ToolCall, content: str, *, is_error: bool) -> None:
+            events.append(f"tool-end:{call.name}:{is_error}")
+
+    llm = ScriptedLlm([
+        ChatResponse(
+            reasoning_content="inspect",
+            tool_calls=(ToolCall("call", "echo", '{"value":"x"}'),),
+        ),
+        ChatResponse(content="done"),
+    ])
+    agent = Agent(llm, echo_registry(), stream_listener=Listener())
+
+    assert agent.run("question") == "done"
+    assert events == [
+        "llm",
+        "reasoning:inspect",
+        "tool-start:echo",
+        "tool-end:echo:False",
+        "llm",
+        "content:done",
+    ]
