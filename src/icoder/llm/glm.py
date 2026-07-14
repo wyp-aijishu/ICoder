@@ -8,10 +8,15 @@ from icoder.llm.openai_compatible import OpenAICompatibleClient
 
 DEFAULT_BASE_URL = "https://open.bigmodel.cn/api/coding/paas/v4"
 DEFAULT_MODEL = "glm-5.1"
+MAX_CONTEXT_TOKENS = 200_000
 
 
 class GlmClient(OpenAICompatibleClient):
     """OpenAI-compatible Zhipu GLM client."""
+
+    @property
+    def max_token(self) -> int:
+        return MAX_CONTEXT_TOKENS
 
     def __init__(
         self,

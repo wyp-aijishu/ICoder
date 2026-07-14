@@ -19,6 +19,7 @@ def test_parses_supported_commands_case_insensitively() -> None:
     assert parse_command("/MODEL glm").type is CommandType.MODEL
     assert parse_command("/MODEL glm").payload == "glm"
     assert parse_command(" /clear ").type is CommandType.CLEAR
+    assert parse_command("/compact").type is CommandType.COMPACT
     assert parse_command("/help").type is CommandType.HELP
     assert parse_command("/quit").type is CommandType.EXIT
 

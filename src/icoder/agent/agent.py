@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from icoder.llm.base import ChatResponse, LlmClient, ToolCall
+from icoder.memory import ShortTermMemory
 from icoder.tools.registry import ToolRegistry
 
 DEFAULT_MAX_STEPS = 12
@@ -43,9 +44,7 @@ class Agent:
         self._max_steps = max_steps
         self._max_repeated_tool_calls = max_repeated_tool_calls
         self._system_prompt = system_prompt or _build_system_prompt(workspace)
-        self._history: list[dict[str, Any]] = [
-            {"role": "system", "content": self._system_prompt}
-        ]
+        self._memory = ShortTermMemory(self._system_prompt)
 
     @property
     def llm_client(self) -> LlmClient:
@@ -58,7 +57,11 @@ class Agent:
     @property
     def conversation_history(self) -> tuple[dict[str, Any], ...]:
         """Return a defensive snapshot of the current protocol history."""
-        return tuple(_copy_message(message) for message in self._history)
+        return self._memory.messages
+
+    @property
+    def used_tokens(self) -> int:
+        return self._memory.used_tokens
 
     def set_llm_client(self, llm_client: LlmClient) -> None:
         """Switch provider/model without discarding conversation history."""
@@ -66,23 +69,29 @@ class Agent:
 
     def clear_history(self) -> None:
         """Clear the conversation while retaining the system prompt."""
-        self._history = [{"role": "system", "content": self._system_prompt}]
+        self._memory.clear()
+
+    def compact_history(self) -> bool:
+        """Compact old completed turns, retaining the latest three in full."""
+        return self._memory.compact(self._llm_client, force=True)
 
     def run(self, user_input: str) -> str:
         """Run until the model returns a final response or a guard stops it."""
         if not isinstance(user_input, str) or not user_input.strip():
             raise ValueError("user_input cannot be empty")
 
-        self._history.append({"role": "user", "content": user_input})
+        self._memory.append_user(user_input)
         previous_signature: tuple[tuple[str, str], ...] | None = None
         repeated_count = 0
         tool_definitions = self._tool_registry.definitions()
 
         for _step in range(1, self._max_steps + 1):
+            self._memory.prepare_for_llm(self._llm_client, tool_definitions or None)
             response = self._llm_client.chat(
-                self._history,
+                self._memory.messages,
                 tool_definitions or None,
             )
+            self._memory.record_usage(response)
             if response.has_tool_calls:
                 signature = tuple(
                     (call.name, call.arguments) for call in response.tool_calls
@@ -94,14 +103,14 @@ class Agent:
                         "model repeated the same tool calls without making progress"
                     )
 
-                self._history.append(self._assistant_tool_message(response))
+                self._memory.append(self._assistant_tool_message(response))
                 self._execute_tool_calls(response.tool_calls)
                 continue
 
             final_content = response.content.strip()
             if not final_content:
                 raise AgentLoopError("model returned no final answer")
-            self._history.append(
+            self._memory.append(
                 {"role": "assistant", "content": response.content}
             )
             return final_content
@@ -127,7 +136,7 @@ class Agent:
         for call in calls:
             result = self._tool_registry.execute(call.name, call.arguments)
             content = f"ERROR: {result.content}" if result.is_error else result.content
-            self._history.append(
+            self._memory.append(
                 {
                     "role": "tool",
                     "tool_call_id": call.id,
@@ -169,14 +178,3 @@ def _build_system_prompt(workspace: str | Path | None) -> str:
     )
 
 
-def _copy_message(message: dict[str, Any]) -> dict[str, Any]:
-    copied = dict(message)
-    if "tool_calls" in copied:
-        copied["tool_calls"] = [
-            {
-                **dict(call),
-                "function": dict(call.get("function", {})),
-            }
-            for call in copied["tool_calls"]
-        ]
-    return copied

@@ -43,6 +43,9 @@ class ChatResponse:
     content: str = ""
     tool_calls: tuple[ToolCall, ...] = field(default_factory=tuple)
     reasoning_content: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    total_tokens: int = 0
 
     @property
     def has_tool_calls(self) -> bool:
@@ -61,6 +64,11 @@ class LlmClient(ABC):
     @abstractmethod
     def model_name(self) -> str:
         """Return the upstream model identifier."""
+
+    @property
+    def max_token(self) -> int:
+        """Return the model's maximum context window size."""
+        return 1_000_000
 
     @property
     def preserves_reasoning_content(self) -> bool:

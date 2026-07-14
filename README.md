@@ -3,6 +3,7 @@
 ICoder 是一个使用 Python 实现的最小命令行 ReAct 编程智能体，参考 PaiCLI 的分层思想构建。目前 MVP 已具备：
 
 - 连续对话和 ReAct 工具调用循环
+- 短期记忆、Token 累计和上下文自动压缩
 - DeepSeek、智谱 GLM OpenAI-compatible 客户端
 - 运行时模型切换
 - 工作区内文件读写、命令执行和代码搜索
@@ -102,6 +103,7 @@ icoder --version
 | `/model glm` | 切换到 GLM，并读取 GLM 环境配置 |
 | `/model glm:glm-5.1` | 切换 Provider 并临时指定模型 |
 | `/clear` | 清空当前对话历史，保留 system prompt |
+| `/compact` | 压缩较早对话，保留最近 3 轮完整对话 |
 | `/help` | 显示交互命令帮助 |
 | `/exit`、`/quit` | 退出程序 |
 
@@ -129,6 +131,8 @@ Agent 会维护 OpenAI-compatible 消息历史：
 3. 按原始顺序执行工具，并使用对应的 `tool_call_id` 回灌结果。
 4. 工具失败时将 `ERROR:` 结果回灌，让模型有机会修正参数。
 5. 模型不再调用工具时，将文本作为最终回答返回。
+
+每次调用模型前，Agent 都会检查短期记忆的 Token 用量。模型交互使用服务端返回的 usage 累计，当前用户输入按中文约 1.5 字/token、其他文本约 4 字符/token 估算。当用量达到上下文窗口的 90% 时，Agent 会把较早对话压缩成动态摘要并加入 system prompt，同时完整保留最近 3 轮对话。DeepSeek 上下文窗口按 1M Token 管理，GLM 按 200K Token 管理；也可以使用 `/compact` 手动触发压缩。
 
 默认最多执行 12 步；连续重复相同工具调用 3 次、超过步骤预算或返回空答案时抛出 `AgentLoopError`，避免无限循环。DeepSeek 返回的 `reasoning_content` 会按其工具调用协议带入下一轮请求，其他 Provider 默认不回传该字段。
 

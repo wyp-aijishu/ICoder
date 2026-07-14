@@ -19,3 +19,5 @@ def test_provider_strategies_expose_identity() -> None:
         "deepseek-v4-flash",
     )
     assert (glm.provider_name, glm.model_name) == ("glm", "glm-5.1")
+    assert deepseek.max_token == 1_000_000
+    assert glm.max_token == 200_000

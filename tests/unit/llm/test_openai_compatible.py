@@ -25,8 +25,8 @@ def sdk_with(completions: FakeCompletions):
     return SimpleNamespace(chat=SimpleNamespace(completions=completions))
 
 
-def completion(message):
-    return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+def completion(message, usage=None):
+    return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
 
 
 def test_normalizes_text_response_and_omits_empty_tools() -> None:
@@ -64,6 +64,20 @@ def test_normalizes_multiple_tool_calls_and_reasoning() -> None:
     assert [call.name for call in response.tool_calls] == ["read_file", "list_dir"]
     assert response.tool_calls[0].as_message_dict()["id"] == "call-1"
     assert completions.requests[0]["tools"] == tools
+
+
+def test_normalizes_provider_token_usage() -> None:
+    usage = SimpleNamespace(prompt_tokens=12, completion_tokens=5, total_tokens=17)
+    completions = FakeCompletions(
+        completion(SimpleNamespace(content="answer", tool_calls=None), usage)
+    )
+    client = DeepSeekClient("key", sdk_client=sdk_with(completions))
+
+    response = client.chat([{"role": "user", "content": "hello"}])
+
+    assert response.prompt_tokens == 12
+    assert response.completion_tokens == 5
+    assert response.total_tokens == 17
 
 
 def test_rejects_empty_provider_response() -> None:

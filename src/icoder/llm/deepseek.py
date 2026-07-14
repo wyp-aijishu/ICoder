@@ -8,10 +8,15 @@ from icoder.llm.openai_compatible import OpenAICompatibleClient
 
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
+MAX_CONTEXT_TOKENS = 1_000_000
 
 
 class DeepSeekClient(OpenAICompatibleClient):
     """OpenAI-compatible DeepSeek client."""
+
+    @property
+    def max_token(self) -> int:
+        return MAX_CONTEXT_TOKENS
 
     @property
     def preserves_reasoning_content(self) -> bool:

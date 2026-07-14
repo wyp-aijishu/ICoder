@@ -80,10 +80,19 @@ class OpenAICompatibleClient(LlmClient):
         tool_calls = tuple(_normalize_tool_call(call) for call in (getattr(message, "tool_calls", None) or ()))
         if not content and not reasoning and not tool_calls:
             raise LlmError(f"{self._provider} returned an empty response")
+        usage = getattr(completion, "usage", None)
+        prompt_tokens = _usage_value(usage, "prompt_tokens")
+        completion_tokens = _usage_value(usage, "completion_tokens")
+        total_tokens = _usage_value(usage, "total_tokens")
+        if total_tokens == 0:
+            total_tokens = prompt_tokens + completion_tokens
         return ChatResponse(
             content=content,
             tool_calls=tool_calls,
             reasoning_content=reasoning,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
         )
 
 
@@ -115,3 +124,8 @@ def _required(value: object, field_name: str) -> str:
 
 def _optional_text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
+
+
+def _usage_value(usage: object, name: str) -> int:
+    value = getattr(usage, name, 0) if usage is not None else 0
+    return value if isinstance(value, int) and value >= 0 else 0

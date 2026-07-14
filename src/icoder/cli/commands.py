@@ -11,6 +11,7 @@ class CommandType(Enum):
     UNKNOWN = auto()
     MODEL = auto()
     CLEAR = auto()
+    COMPACT = auto()
     HELP = auto()
     EXIT = auto()
 
@@ -42,6 +43,8 @@ def parse_command(value: str | None) -> ParsedCommand:
         return ParsedCommand(CommandType.EXIT)
     if normalized == "/clear" and normalized_payload is None:
         return ParsedCommand(CommandType.CLEAR)
+    if normalized == "/compact" and normalized_payload is None:
+        return ParsedCommand(CommandType.COMPACT)
     if normalized in {"/help", "/?"} and normalized_payload is None:
         return ParsedCommand(CommandType.HELP)
     if normalized == "/model":

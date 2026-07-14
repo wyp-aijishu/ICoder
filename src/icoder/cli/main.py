@@ -18,6 +18,7 @@ HELP_TEXT = """可用命令:
     /model                       显示当前模型
     /model [provider[:model]]    切换 Provider，可选指定模型
     /clear                       清空当前对话历史
+    /compact                     压缩较早对话并保留最近 3 轮
     /help                        显示帮助
     /exit, /quit                 退出
 """
@@ -127,6 +128,15 @@ def run_cli(
         if command.type is CommandType.CLEAR:
             agent.clear_history()
             _print(output, "✅ 当前对话历史已清空。")
+            continue
+        if command.type is CommandType.COMPACT:
+            try:
+                compacted = agent.compact_history()
+            except (LlmError, ValueError) as exc:
+                _print(output, f"❌ 对话压缩失败: {exc}")
+            else:
+                message = "✅ 已压缩较早对话。" if compacted else "当前完整对话不超过 3 轮，无需压缩。"
+                _print(output, message)
             continue
         if command.type is CommandType.UNKNOWN:
             _print(output, f"❌ 未知命令: {command.payload}")
