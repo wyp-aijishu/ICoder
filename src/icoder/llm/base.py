@@ -82,3 +82,43 @@ class LlmClient(ABC):
         tools: Sequence[ToolDefinition] | None = None,
     ) -> ChatResponse:
         """Generate the next assistant response."""
+
+class StreamListener:
+    """Receive incremental model output and Agent tool execution events."""
+
+    def on_llm_start(self) -> None:
+        """Called immediately before one model request."""
+
+    def on_reasoning_delta(self, delta: str) -> None:
+        """Receive an incremental reasoning fragment."""
+
+    def on_content_delta(self, delta: str) -> None:
+        """Receive an incremental assistant-content fragment."""
+
+    def on_tool_start(self, call: ToolCall) -> None:
+        """Called immediately before a complete tool call is executed."""
+
+    def on_tool_end(self, call: ToolCall, content: str, *, is_error: bool) -> None:
+        """Called immediately after a tool call finishes."""
+
+
+NOOP_STREAM_LISTENER = StreamListener()
+
+def chat_stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolDefinition] | None = None,
+        listener: StreamListener | None = None,
+    ) -> ChatResponse:
+        """Generate a response while emitting deltas.
+
+        Providers without native streaming retain compatibility by invoking
+        :meth:`chat` and replaying the complete response as one delta.
+        """
+        stream = listener or NOOP_STREAM_LISTENER
+        response = self.chat(messages, tools)
+        if response.reasoning_content:
+            stream.on_reasoning_delta(response.reasoning_content)
+        if response.content:
+            stream.on_content_delta(response.content)
+        return response
