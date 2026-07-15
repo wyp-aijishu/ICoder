@@ -21,6 +21,7 @@ def test_parses_supported_commands_case_insensitively() -> None:
     assert parse_command("/MODEL glm").payload == "glm"
     assert parse_command(" /clear ").type is CommandType.CLEAR
     assert parse_command("/compact").type is CommandType.COMPACT
+    assert parse_command("/mcp").type is CommandType.MCP
     assert parse_command("/save remember this") == ParsedCommand(
         CommandType.SAVE,
         "remember this",
@@ -32,6 +33,7 @@ def test_parses_supported_commands_case_insensitively() -> None:
 def test_unknown_and_malformed_commands_are_not_agent_input() -> None:
     assert parse_command("/missing").type is CommandType.UNKNOWN
     assert parse_command("/clear now").type is CommandType.UNKNOWN
+    assert parse_command("/mcp status").type is CommandType.UNKNOWN
 
 
 def test_parses_model_selection() -> None:

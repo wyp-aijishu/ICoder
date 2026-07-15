@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from icoder.agent import Agent
-from icoder.llm.base import ChatResponse, LlmClient, Message, ToolCall, ToolDefinition
+from icoder.llm.base import ChatResponse, LlmClient, Message, StreamListener, ToolCall, ToolDefinition
 from icoder.tools import create_default_registry
 
 
@@ -35,6 +35,14 @@ class FileReadingLlm(LlmClient):
             )
         self.observation = str(messages[-1]["content"])
         return ChatResponse(content=f"The file says: {self.observation.strip()}")
+
+    def chat_stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolDefinition] | None,
+        listener: StreamListener,
+    ) -> ChatResponse:
+        return self.chat(messages, tools)
 
 
 def test_agent_and_default_registry_complete_file_read_flow(tmp_path: Path) -> None:

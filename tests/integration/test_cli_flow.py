@@ -5,7 +5,7 @@ from io import StringIO
 from pathlib import Path
 
 from icoder.cli.main import build_parser, run_cli
-from icoder.llm.base import ChatResponse, LlmClient, Message, ToolCall, ToolDefinition
+from icoder.llm.base import ChatResponse, LlmClient, Message, StreamListener, ToolCall, ToolDefinition
 
 
 class CliFileLlm(LlmClient):
@@ -32,6 +32,14 @@ class CliFileLlm(LlmClient):
             )
         return ChatResponse(content=f"Observed: {str(messages[-1]['content']).strip()}")
 
+    def chat_stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolDefinition] | None,
+        listener: StreamListener,
+    ) -> ChatResponse:
+        return self.chat(messages, tools)
+
 
 def test_cli_agent_llm_and_tool_registry_end_to_end(tmp_path: Path) -> None:
     (tmp_path / "note.txt").write_text("integration works", encoding="utf-8")
@@ -44,6 +52,7 @@ def test_cli_agent_llm_and_tool_registry_end_to_end(tmp_path: Path) -> None:
         input_fn=lambda _prompt: next(entries),
         output=output,
         client_factory=lambda provider=None, *, model=None: CliFileLlm(),
+        mcp_config_loader=lambda: (),
     )
 
     assert code == 0

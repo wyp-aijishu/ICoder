@@ -39,6 +39,6 @@ def test_registry_normalizes_invalid_json_and_unknown_tools() -> None:
 def test_default_registry_contains_all_mvp_tools(tmp_path) -> None:
     registry = create_default_registry(tmp_path)
 
-    assert len(registry) == 5
+    assert len(registry) == 7
     for name in ("read_file", "write_file", "list_dir", "execute_command", "search_code"):
         assert name in registry

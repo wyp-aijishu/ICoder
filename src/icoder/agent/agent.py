@@ -189,14 +189,9 @@ def _build_system_prompt(workspace: str | Path | None) -> str:
 
 ## Tools
 
-你可以使用以下工具：
+可调用的工具及其参数 Schema 会随每次请求提供。名称以 `mcp__` 开头的工具来自已配置的本地 MCP Server；使用其完整名称和 Schema 中定义的参数。
 
-1. `read_file` - 读取文件内容
-2. `write_file` - 写入文件内容
-3. `list_dir` - 列出目录内容
-4. `execute_command` - 在当前项目目录执行短时 Shell 命令
-5. `search_code` - 根据正则表达式搜索代码
-6. `read_memory` - 根据系统提示词中的长期记忆索引读取完整记忆
+浏览器页面分析优先使用 DOM 快照类工具，例如 `mcp__chrome_devtools__take_snapshot`。截图等非文本 MCP 结果暂不支持传入模型上下文。
 
 ## Tool Policy
 

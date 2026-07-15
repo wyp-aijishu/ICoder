@@ -52,6 +52,19 @@ class ScriptedLlm(LlmClient):
         )
         return self.responses.pop(0)
 
+    def chat_stream(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolDefinition] | None,
+        listener: StreamListener,
+    ) -> ChatResponse:
+        response = self.chat(messages, tools)
+        if response.reasoning_content:
+            listener.on_reasoning_delta(response.reasoning_content)
+        if response.content:
+            listener.on_content_delta(response.content)
+        return response
+
 
 def echo_registry(executed: list[str] | None = None) -> ToolRegistry:
     def handler(arguments):
