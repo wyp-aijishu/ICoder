@@ -63,6 +63,14 @@ class ShortTermMemory:
         self._pending_user_tokens = 0
         self._messages = [{"role": "system", "content": self._base_system_prompt}]
 
+    def set_base_system_prompt(self, system_prompt: str) -> None:
+        """Replace dynamic system context while preserving summary and turns."""
+        self._base_system_prompt = system_prompt
+        self._messages[0] = {
+            "role": "system",
+            "content": self._system_prompt_with_summary() if self._summary else system_prompt,
+        }
+
     def append_user(self, content: str) -> None:
         self._messages.append({"role": "user", "content": content})
         estimated = estimate_user_tokens(content)

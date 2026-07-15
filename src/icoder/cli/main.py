@@ -20,6 +20,7 @@ HELP_TEXT = """可用命令:
     /model [provider[:model]]    切换 Provider，可选指定模型
     /clear                       清空当前对话历史
     /compact                     压缩较早对话并保留最近 3 轮
+    /save [content]              将内容提取并保存为项目长期记忆
     /help                        显示帮助
     /exit, /quit                 退出
 """
@@ -98,6 +99,10 @@ def run_cli(
             workspace=workspace,
             max_steps=args.max_steps,
             stream_listener=stream_renderer,
+            memory_client_factory=lambda provider, model: client_factory(
+                provider,
+                model=model,
+            ),
         )
     except (LlmConfigurationError, ValueError, OSError) as exc:
         _print(output, f"❌ 启动失败: {exc}")
@@ -140,6 +145,18 @@ def run_cli(
             else:
                 message = "✅ 已压缩较早对话。" if compacted else "当前完整对话不超过 3 轮，无需压缩。"
                 _print(output, message)
+            continue
+        if command.type is CommandType.SAVE:
+            try:
+                entries = agent.save_memory(command.payload or "")
+            except (LlmError, ValueError, OSError) as exc:
+                _print(output, f"❌ 长期记忆保存失败: {exc}")
+            else:
+                if entries:
+                    names = "、".join(entry.filename for entry in entries)
+                    _print(output, f"✅ 已保存长期记忆: {names}")
+                else:
+                    _print(output, "未发现值得长期保存的内容。")
             continue
         if command.type is CommandType.UNKNOWN:
             _print(output, f"❌ 未知命令: {command.payload}")

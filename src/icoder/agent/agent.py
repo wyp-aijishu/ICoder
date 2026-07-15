@@ -13,10 +13,10 @@ from icoder.llm.base import (
     StreamListener,
     ToolCall,
 )
-from icoder.memory import ShortTermMemory
+from icoder.memory import MemoryClientFactory, MemoryEntry, MemoryManager
 from icoder.tools.registry import ToolRegistry
 
-DEFAULT_MAX_STEPS = 12
+DEFAULT_MAX_STEPS = 50
 DEFAULT_MAX_REPEATED_TOOL_CALLS = 3
 
 
@@ -41,6 +41,8 @@ class Agent:
         max_repeated_tool_calls: int = DEFAULT_MAX_REPEATED_TOOL_CALLS,
         system_prompt: str | None = None,
         stream_listener: StreamListener | None = None,
+        memory_root: str | Path | None = None,
+        memory_client_factory: MemoryClientFactory | None = None,
     ) -> None:
         if max_steps < 1:
             raise ValueError("max_steps must be greater than zero")
@@ -51,7 +53,14 @@ class Agent:
         self._max_steps = max_steps
         self._max_repeated_tool_calls = max_repeated_tool_calls
         self._system_prompt = system_prompt or _build_system_prompt(workspace)
-        self._memory = ShortTermMemory(self._system_prompt)
+        self._memory = MemoryManager(
+            self._system_prompt,
+            workspace or Path.cwd(),
+            memory_root=memory_root,
+            memory_client_factory=memory_client_factory,
+        )
+        if "read_memory" not in self._tool_registry:
+            self._tool_registry.register(self._memory.long_term.create_read_tool())
         self._stream_listener = stream_listener or NOOP_STREAM_LISTENER
 
     @property
@@ -82,6 +91,10 @@ class Agent:
     def compact_history(self) -> bool:
         """Compact old completed turns, retaining the latest three in full."""
         return self._memory.compact(self._llm_client, force=True)
+
+    def save_memory(self, content: str) -> tuple[MemoryEntry, ...]:
+        """Extract and persist explicit `/save` content."""
+        return self._memory.save_explicit(content, self._llm_client)
 
     def run(self, user_input: str) -> str:
         """Run until the model returns a final response or a guard stops it."""
@@ -123,6 +136,7 @@ class Agent:
             self._memory.append(
                 {"role": "assistant", "content": response.content}
             )
+            self._memory.schedule_implicit_extraction(self._llm_client)
             return final_content
 
         raise AgentLoopError(
@@ -182,6 +196,7 @@ def _build_system_prompt(workspace: str | Path | None) -> str:
 3. `list_dir` - 列出目录内容
 4. `execute_command` - 在当前项目目录执行短时 Shell 命令
 5. `search_code` - 根据正则表达式搜索代码
+6. `read_memory` - 根据系统提示词中的长期记忆索引读取完整记忆
 
 ## Tool Policy
 
@@ -189,6 +204,7 @@ def _build_system_prompt(workspace: str | Path | None) -> str:
 - 使用工具后，根据工具返回结果继续思考下一步行动。
 - 同一轮返回多个工具调用时，系统会并行执行；如果工具之间有依赖关系，请分多轮调用。
 - 如果需要同时检查多个已知且互不依赖的文件或目录，请在同一轮返回多个 `read_file` / `list_dir` / `search_code` 调用。
+- 长期记忆索引只包含摘要；需要其中的完整信息时，使用 `read_memory` 并传入索引里的准确文件名。
 
 '''
     )

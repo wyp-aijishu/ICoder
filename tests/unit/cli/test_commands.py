@@ -5,6 +5,7 @@ import pytest
 from icoder.cli.commands import (
     CommandType,
     ModelSelection,
+    ParsedCommand,
     parse_command,
     parse_model_selection,
 )
@@ -20,6 +21,10 @@ def test_parses_supported_commands_case_insensitively() -> None:
     assert parse_command("/MODEL glm").payload == "glm"
     assert parse_command(" /clear ").type is CommandType.CLEAR
     assert parse_command("/compact").type is CommandType.COMPACT
+    assert parse_command("/save remember this") == ParsedCommand(
+        CommandType.SAVE,
+        "remember this",
+    )
     assert parse_command("/help").type is CommandType.HELP
     assert parse_command("/quit").type is CommandType.EXIT
 
