@@ -86,12 +86,14 @@ def create_default_registry(
     from icoder.tools.code_search_tool import create_code_search_tools
     from icoder.tools.command_tool import create_command_tools
     from icoder.tools.file_tools import create_file_tools
+    from icoder.tools.web_tools import create_web_tools
 
     registry = ToolRegistry()
     for tool in (
         *create_file_tools(workspace),
         *create_command_tools(workspace, timeout_seconds=command_timeout_seconds),
         *create_code_search_tools(workspace),
+        *create_web_tools(),
     ):
         registry.register(tool)
     return registry
