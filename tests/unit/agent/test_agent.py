@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from threading import Barrier, Event, Lock, get_ident
+from time import monotonic
 
 import pytest
 
@@ -85,13 +87,30 @@ def echo_registry(executed: list[str] | None = None) -> ToolRegistry:
 
 
 def test_react_loop_executes_tool_then_returns_final_answer() -> None:
+    caller_thread = get_ident()
+    handler_threads: list[int] = []
+
+    def handler(arguments):
+        handler_threads.append(get_ident())
+        return f"observed:{arguments['value']}"
+
     llm = ScriptedLlm(
         [
             ChatResponse(tool_calls=(ToolCall("call-1", "echo", '{"value":"hello"}'),)),
             ChatResponse(content="Done."),
         ]
     )
-    agent = Agent(llm, echo_registry())
+    registry = ToolRegistry(
+        [
+            Tool(
+                "echo",
+                "Echo a value.",
+                object_schema({"value": {"type": "string"}}, ("value",)),
+                handler,
+            )
+        ]
+    )
+    agent = Agent(llm, registry)
 
     answer = agent.run("Use the echo tool")
 
@@ -106,28 +125,128 @@ def test_react_loop_executes_tool_then_returns_final_answer() -> None:
     }
     assert len(llm.requests) == 2
     assert llm.requests[1][0][-1]["role"] == "tool"
+    assert handler_threads == [caller_thread]
 
 
-def test_multiple_tool_calls_execute_in_original_order() -> None:
+def test_multiple_tool_calls_execute_in_parallel_and_preserve_message_order() -> None:
     executed: list[str] = []
+    barrier = Barrier(2)
+
+    def handler(arguments):
+        barrier.wait(timeout=1)
+        executed.append(arguments["value"])
+        return f"observed:{arguments['value']}"
+
+    registry = ToolRegistry(
+        [
+            Tool(
+                "parallel_echo",
+                "Echo a value after all calls start.",
+                object_schema({"value": {"type": "string"}}, ("value",)),
+                handler,
+            )
+        ]
+    )
     llm = ScriptedLlm(
         [
             ChatResponse(
                 tool_calls=(
-                    ToolCall("one", "echo", '{"value":"first"}'),
-                    ToolCall("two", "echo", '{"value":"second"}'),
+                    ToolCall("one", "parallel_echo", '{"value":"first"}'),
+                    ToolCall("two", "parallel_echo", '{"value":"second"}'),
                 )
             ),
             ChatResponse(content="complete"),
         ]
     )
-    agent = Agent(llm, echo_registry(executed))
+    agent = Agent(llm, registry)
 
     agent.run("run both")
 
-    assert executed == ["first", "second"]
+    assert sorted(executed) == ["first", "second"]
     tool_messages = [m for m in agent.conversation_history if m["role"] == "tool"]
     assert [m["tool_call_id"] for m in tool_messages] == ["one", "two"]
+
+
+def test_multiple_tool_calls_use_at_most_three_workers() -> None:
+    lock = Lock()
+    barrier = Barrier(3)
+    active = 0
+    peak = 0
+
+    def handler(arguments):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        barrier.wait(timeout=1)
+        with lock:
+            active -= 1
+        return arguments["value"]
+
+    registry = ToolRegistry(
+        [
+            Tool(
+                "limited",
+                "Run with limited concurrency.",
+                object_schema({"value": {"type": "string"}}, ("value",)),
+                handler,
+            )
+        ]
+    )
+    calls = tuple(
+        ToolCall(str(index), "limited", f'{{"value":"{index}"}}')
+        for index in range(6)
+    )
+    llm = ScriptedLlm(
+        [ChatResponse(tool_calls=calls), ChatResponse(content="complete")]
+    )
+
+    Agent(llm, registry).run("run all")
+
+    assert peak == 3
+
+
+def test_timed_out_tool_returns_error_to_model_without_waiting_for_completion() -> None:
+    release = Event()
+
+    def slow_tool(_arguments):
+        release.wait(timeout=1)
+        return "too late"
+
+    registry = ToolRegistry(
+        [
+            Tool("slow", "Run slowly.", object_schema({}), slow_tool),
+            Tool("quick", "Return immediately.", object_schema({}), lambda _: "done"),
+        ]
+    )
+    llm = ScriptedLlm(
+        [
+            ChatResponse(
+                tool_calls=(
+                    ToolCall("slow-call", "slow", "{}"),
+                    ToolCall("quick-call", "quick", "{}"),
+                )
+            ),
+            ChatResponse(content="recovered"),
+        ]
+    )
+    agent = Agent(llm, registry, tool_timeout_seconds=0.02)
+
+    started = monotonic()
+    assert agent.run("run slowly") == "recovered"
+    elapsed = monotonic() - started
+    release.set()
+
+    tool_message = agent.conversation_history[-3]
+    assert tool_message["content"] == (
+        "ERROR: tool execution timed out after 0.02 seconds"
+    )
+    assert elapsed < 0.3
+
+
+def test_tool_timeout_must_be_greater_than_zero() -> None:
+    with pytest.raises(ValueError, match="tool_timeout_seconds"):
+        Agent(ScriptedLlm([]), echo_registry(), tool_timeout_seconds=0)
 
 
 def test_keyboard_interrupt_during_tool_rolls_back_current_turn() -> None:

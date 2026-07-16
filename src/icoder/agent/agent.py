@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import (
+    Future,
+    ThreadPoolExecutor,
+    TimeoutError as FutureTimeoutError,
+)
 from pathlib import Path
+from time import monotonic
 from typing import Any
 
 from icoder.llm.base import (
@@ -14,10 +20,13 @@ from icoder.llm.base import (
     ToolCall,
 )
 from icoder.memory import MemoryClientFactory, MemoryEntry, MemoryManager
+from icoder.tools.base import ToolResult
 from icoder.tools.registry import ToolRegistry
 
 DEFAULT_MAX_STEPS = 50
 DEFAULT_MAX_REPEATED_TOOL_CALLS = 3
+DEFAULT_MAX_PARALLEL_TOOLS = 3
+DEFAULT_TOOL_TIMEOUT_SECONDS = 60.0
 
 
 class AgentError(Exception):
@@ -39,6 +48,7 @@ class Agent:
         workspace: str | Path | None = None,
         max_steps: int = DEFAULT_MAX_STEPS,
         max_repeated_tool_calls: int = DEFAULT_MAX_REPEATED_TOOL_CALLS,
+        tool_timeout_seconds: float = DEFAULT_TOOL_TIMEOUT_SECONDS,
         system_prompt: str | None = None,
         stream_listener: StreamListener | None = None,
         memory_root: str | Path | None = None,
@@ -48,10 +58,13 @@ class Agent:
             raise ValueError("max_steps must be greater than zero")
         if max_repeated_tool_calls < 1:
             raise ValueError("max_repeated_tool_calls must be greater than zero")
+        if tool_timeout_seconds <= 0:
+            raise ValueError("tool_timeout_seconds must be greater than zero")
         self._llm_client = llm_client
         self._tool_registry = tool_registry
         self._max_steps = max_steps
         self._max_repeated_tool_calls = max_repeated_tool_calls
+        self._tool_timeout_seconds = tool_timeout_seconds
         self._system_prompt = system_prompt or _build_system_prompt(workspace)
         self._memory = MemoryManager(
             self._system_prompt,
@@ -162,22 +175,62 @@ class Agent:
         return message
 
     def _execute_tool_calls(self, calls: Sequence[ToolCall]) -> None:
-        for call in calls:
+        if len(calls) == 1:
+            call = calls[0]
             self._stream_listener.on_tool_start(call)
             result = self._tool_registry.execute(call.name, call.arguments)
-            content = f"ERROR: {result.content}" if result.is_error else result.content
-            self._stream_listener.on_tool_end(
-                call,
-                result.content,
-                is_error=result.is_error,
+            self._record_tool_result(call, result)
+            return
+
+        executor = ThreadPoolExecutor(
+            max_workers=DEFAULT_MAX_PARALLEL_TOOLS,
+            thread_name_prefix="icoder-tool",
+        )
+        executions: list[tuple[ToolCall, Future[ToolResult], float]] = []
+        for call in calls:
+            self._stream_listener.on_tool_start(call)
+            deadline = monotonic() + self._tool_timeout_seconds
+            future = executor.submit(
+                self._tool_registry.execute,
+                call.name,
+                call.arguments,
             )
-            self._memory.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": call.id,
-                    "content": content,
-                }
-            )
+            executions.append((call, future, deadline))
+
+        try:
+            for call, future, deadline in executions:
+                try:
+                    result = future.result(
+                        timeout=max(0.0, deadline - monotonic())
+                    )
+                except FutureTimeoutError:
+                    future.cancel()
+                    result = ToolResult(
+                        name=call.name,
+                        content=(
+                            "tool execution timed out after "
+                            f"{self._tool_timeout_seconds:g} seconds"
+                        ),
+                        is_error=True,
+                    )
+                self._record_tool_result(call, result)
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+    def _record_tool_result(self, call: ToolCall, result: ToolResult) -> None:
+        content = f"ERROR: {result.content}" if result.is_error else result.content
+        self._stream_listener.on_tool_end(
+            call,
+            result.content,
+            is_error=result.is_error,
+        )
+        self._memory.append(
+            {
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": content,
+            }
+        )
 
 
 def _build_system_prompt(workspace: str | Path | None) -> str:
