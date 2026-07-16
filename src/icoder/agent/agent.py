@@ -101,47 +101,52 @@ class Agent:
         if not isinstance(user_input, str) or not user_input.strip():
             raise ValueError("user_input cannot be empty")
 
-        self._memory.append_user(user_input)
-        previous_signature: tuple[tuple[str, str], ...] | None = None
-        repeated_count = 0
-        tool_definitions = self._tool_registry.definitions()
+        checkpoint = self._memory.checkpoint()
+        try:
+            self._memory.append_user(user_input)
+            previous_signature: tuple[tuple[str, str], ...] | None = None
+            repeated_count = 0
+            tool_definitions = self._tool_registry.definitions()
 
-        for _step in range(1, self._max_steps + 1):
-            self._memory.prepare_for_llm(self._llm_client, tool_definitions or None)
-            self._stream_listener.on_llm_start()
-            response = self._llm_client.chat_stream(
-                self._memory.messages,
-                tool_definitions or None,
-                self._stream_listener,
-            )
-            self._memory.record_usage(response)
-            if response.has_tool_calls:
-                signature = tuple(
-                    (call.name, call.arguments) for call in response.tool_calls
+            for _step in range(1, self._max_steps + 1):
+                self._memory.prepare_for_llm(self._llm_client, tool_definitions or None)
+                self._stream_listener.on_llm_start()
+                response = self._llm_client.chat_stream(
+                    self._memory.messages,
+                    tool_definitions or None,
+                    self._stream_listener,
                 )
-                repeated_count = repeated_count + 1 if signature == previous_signature else 1
-                previous_signature = signature
-                if repeated_count >= self._max_repeated_tool_calls:
-                    raise AgentLoopError(
-                        "model repeated the same tool calls without making progress"
+                self._memory.record_usage(response)
+                if response.has_tool_calls:
+                    signature = tuple(
+                        (call.name, call.arguments) for call in response.tool_calls
                     )
+                    repeated_count = repeated_count + 1 if signature == previous_signature else 1
+                    previous_signature = signature
+                    if repeated_count >= self._max_repeated_tool_calls:
+                        raise AgentLoopError(
+                            "model repeated the same tool calls without making progress"
+                        )
 
-                self._memory.append(self._assistant_tool_message(response))
-                self._execute_tool_calls(response.tool_calls)
-                continue
+                    self._memory.append(self._assistant_tool_message(response))
+                    self._execute_tool_calls(response.tool_calls)
+                    continue
 
-            final_content = response.content.strip()
-            if not final_content:
-                raise AgentLoopError("model returned no final answer")
-            self._memory.append(
-                {"role": "assistant", "content": response.content}
+                final_content = response.content.strip()
+                if not final_content:
+                    raise AgentLoopError("model returned no final answer")
+                self._memory.append(
+                    {"role": "assistant", "content": response.content}
+                )
+                self._memory.schedule_implicit_extraction(self._llm_client)
+                return final_content
+
+            raise AgentLoopError(
+                f"agent exceeded the maximum of {self._max_steps} ReAct steps"
             )
-            self._memory.schedule_implicit_extraction(self._llm_client)
-            return final_content
-
-        raise AgentLoopError(
-            f"agent exceeded the maximum of {self._max_steps} ReAct steps"
-        )
+        except KeyboardInterrupt:
+            self._memory.restore(checkpoint)
+            raise
 
     def _assistant_tool_message(self, response: ChatResponse) -> dict[str, Any]:
         message: dict[str, Any] = {

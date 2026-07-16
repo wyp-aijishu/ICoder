@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from icoder.llm.base import ChatResponse, LlmClient, ToolDefinition
@@ -15,6 +16,16 @@ SUMMARY_HEADING = "## 动态对话摘要"
 _COMPACTION_SYSTEM_PROMPT = """你是 ICoder 的对话压缩器。请将提供的较早对话压缩为简洁、准确的中文摘要。
 必须保留：用户意图与约束、已完成任务、关键决定、修改过的文件、未完成任务、错误及用户纠正。
 不要补充对话中不存在的信息。只输出 Markdown 摘要正文，不要输出解释或代码围栏。"""
+
+
+@dataclass(frozen=True, slots=True)
+class ShortTermMemoryCheckpoint:
+    """Snapshot mutable conversation state for turn-level rollback."""
+
+    summary: str
+    messages: tuple[dict[str, Any], ...]
+    used_tokens: int
+    pending_user_tokens: int
 
 
 class ShortTermMemory:
@@ -62,6 +73,20 @@ class ShortTermMemory:
         self._used_tokens = 0
         self._pending_user_tokens = 0
         self._messages = [{"role": "system", "content": self._base_system_prompt}]
+
+    def checkpoint(self) -> ShortTermMemoryCheckpoint:
+        return ShortTermMemoryCheckpoint(
+            summary=self._summary,
+            messages=self.messages,
+            used_tokens=self._used_tokens,
+            pending_user_tokens=self._pending_user_tokens,
+        )
+
+    def restore(self, checkpoint: ShortTermMemoryCheckpoint) -> None:
+        self._summary = checkpoint.summary
+        self._messages = [_copy_message(message) for message in checkpoint.messages]
+        self._used_tokens = checkpoint.used_tokens
+        self._pending_user_tokens = checkpoint.pending_user_tokens
 
     def set_base_system_prompt(self, system_prompt: str) -> None:
         """Replace dynamic system context while preserving summary and turns."""

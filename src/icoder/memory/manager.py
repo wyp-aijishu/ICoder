@@ -4,16 +4,25 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from icoder.llm.base import ChatResponse, LlmClient, Message, ToolDefinition
 from icoder.memory.extractor import MemoryExtractor
 from icoder.memory.long_term import LongTermMemoryStore, MemoryEntry
-from icoder.memory.short_term import ShortTermMemory
+from icoder.memory.short_term import ShortTermMemory, ShortTermMemoryCheckpoint
 
 MemoryClientFactory = Callable[[str, str], LlmClient]
 IMPLICIT_EXTRACTION_EVENT_THRESHOLD = 4
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryCheckpoint:
+    """Opaque snapshot of mutable memory state."""
+
+    short_term: ShortTermMemoryCheckpoint
+    pending_events: tuple[dict[str, Any], ...]
 
 
 class MemoryManager:
@@ -68,6 +77,20 @@ class MemoryManager:
         self.short_term.clear()
         with self._event_lock:
             self._pending_events.clear()
+
+    def checkpoint(self) -> MemoryCheckpoint:
+        with self._event_lock:
+            pending_events = tuple(
+                _copy_event(event) for event in self._pending_events
+            )
+        return MemoryCheckpoint(self.short_term.checkpoint(), pending_events)
+
+    def restore(self, checkpoint: MemoryCheckpoint) -> None:
+        self.short_term.restore(checkpoint.short_term)
+        with self._event_lock:
+            self._pending_events = [
+                _copy_event(event) for event in checkpoint.pending_events
+            ]
 
     def save_explicit(self, content: str, llm_client: LlmClient) -> tuple[MemoryEntry, ...]:
         entries = self._extractor.extract_text(content, llm_client)

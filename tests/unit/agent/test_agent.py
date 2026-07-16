@@ -130,6 +130,36 @@ def test_multiple_tool_calls_execute_in_original_order() -> None:
     assert [m["tool_call_id"] for m in tool_messages] == ["one", "two"]
 
 
+def test_keyboard_interrupt_during_tool_rolls_back_current_turn() -> None:
+    def interrupt(_arguments):
+        raise KeyboardInterrupt
+
+    registry = ToolRegistry(
+        [
+            Tool(
+                "interrupt",
+                "Interrupt execution.",
+                object_schema({}),
+                interrupt,
+            )
+        ]
+    )
+    llm = ScriptedLlm(
+        [
+            ChatResponse(content="first answer"),
+            ChatResponse(tool_calls=(ToolCall("call", "interrupt", "{}"),)),
+        ]
+    )
+    agent = Agent(llm, registry)
+    agent.run("first question")
+    history_before_interruption = agent.conversation_history
+
+    with pytest.raises(KeyboardInterrupt):
+        agent.run("interrupted question")
+
+    assert agent.conversation_history == history_before_interruption
+
+
 def test_tool_error_is_returned_to_model_and_loop_continues() -> None:
     llm = ScriptedLlm(
         [
